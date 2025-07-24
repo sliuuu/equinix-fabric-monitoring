@@ -129,6 +129,277 @@
         -496,
         336
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process the Equinix Fabric connections response\nconst response = $input.first();\nconst responseData = response?.json; // FIXED: Access json property\nconst connections = responseData?.data || [];\nconst processedConnections = [];\n\n// Handle case where connections array is empty\nif (connections.length === 0) {\n  console.log('No connections found');\n  return {\n    summary: {\n      totalConnections: 0,\n      healthyConnections: 0,\n      downConnections: 0,\n      transitioningConnections: 0,\n      unknownConnections: 0,\n      lastUpdated: new Date().toISOString(),\n      message: 'No active connections found'\n    },\n    connections: [],\n    alertsRequired: [],\n    pagination: responseData?.pagination || null\n  };\n}\n\nfor (const connection of connections) {\n  const processedConnection = {\n    uuid: connection.uuid,\n    name: connection.name,\n    type: connection.type,\n    state: connection.state,\n    operationalStatus: connection.operation?.equinixStatus || connection.operation?.opStatus,\n    providerStatus: connection.operation?.providerStatus,\n    bandwidth: connection.bandwidth,\n    aSide: {\n      accessPoint: connection.aSide?.accessPoint?.type,\n      location: connection.aSide?.accessPoint?.location?.metroCode || connection.aSide?.accessPoint?.location?.metroName,\n      port: connection.aSide?.accessPoint?.port?.uuid,\n      vlan: connection.aSide?.accessPoint?.linkProtocol?.vlanTag\n    },\n    zSide: {\n      accessPoint: connection.zSide?.accessPoint?.type,\n      location: connection.zSide?.accessPoint?.location?.metroCode || connection.zSide?.accessPoint?.location?.metroName,\n      port: connection.zSide?.accessPoint?.port?.uuid,\n      vlan: connection.zSide?.accessPoint?.linkProtocol?.vlanTag\n    },\n    account: {\n      accountNumber: connection.account?.accountNumber,\n      organizationName: connection.account?.organizationName\n    },\n    createdDateTime: connection.changeLog?.createdDateTime,\n    lastUpdatedDateTime: connection.changeLog?.updatedDateTime,\n    healthStatus: determineHealthStatus(connection)\n  };\n  \n  processedConnections.push(processedConnection);\n}\n\n// Function to determine overall health status\nfunction determineHealthStatus(connection) {\n  const state = connection.state?.toLowerCase();\n  const equinixStatus = connection.operation?.equinixStatus?.toLowerCase();\n  const providerStatus = connection.operation?.providerStatus?.toLowerCase();\n  \n  if (state === 'provisioned' && equinixStatus === 'provisioned') {\n    return 'healthy';\n  } else if (state === 'provisioning' || state === 'deprovisioning') {\n    return 'transitioning';\n  } else if (state === 'deprovisioned' || equinixStatus === 'down' || providerStatus === 'down') {\n    return 'down';\n  } else {\n    return 'unknown';\n  }\n}\n\n// Calculate summary statistics\nconst summary = {\n  totalConnections: processedConnections.length,\n  healthyConnections: processedConnections.filter(c => c.healthStatus === 'healthy').length,\n  downConnections: processedConnections.filter(c => c.healthStatus === 'down').length,\n  transitioningConnections: processedConnections.filter(c => c.healthStatus === 'transitioning').length,\n  unknownConnections: processedConnections.filter(c => c.healthStatus === 'unknown').length,\n  lastUpdated: new Date().toISOString(),\n  pagination: responseData?.pagination || null\n};\n\nreturn {\n  summary: summary,\n  connections: processedConnections,\n  alertsRequired: processedConnections.filter(c => c.healthStatus === 'down' || c.healthStatus === 'unknown')\n};"
+      },
+      "id": "d874377c-f2f1-4c6c-b537-c8c8fbf1e974",
+      "name": "Process Connection Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -272,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition1",
+              "leftValue": "={{ $json.alertsRequired.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b1a24ab9-7aaa-4379-bcc3-3089b2252eb9",
+      "name": "Check for Alerts",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{SLACK_WEBHOOK_URL}}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "⚠️ Equinix Fabric Alert"
+            },
+            {
+              "name": "blocks",
+              "value": "=[   {     \"type\": \"header\",      \"text\": {       \"type\": \"plain_text\",       \"text\": \"🔌 Equinix Fabric Alert\"     }   },   {     \"type\": \"section\",     \"text\": {       \"type\": \"mrkdwn\",        \"text\": \"*Connection Issues:*\\n• Down: {{ $json.summary.downConnections }}/{{ $json.summary.totalConnections }}\\n• Unknown: {{ $json.summary.unknownConnections }}\"     }   },   {     \"type\": \"section\",     \"text\": {       \"type\": \"mrkdwn\",       \"text\": \"*Connections Pending Review:*\\n{{ $json.alertsRequired.map(c => '• ' + c.name + ' (' + c.state + ')').join('\\n') }}\"     }   } ]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "21045490-2010-4d46-a00d-9bdfb37af549",
+      "name": "Send Slack Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        176,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.equinix.com/fabric/v4/ports",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "50"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.equinix_access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b0333cb7-fa14-4b97-ac39-f4743ae1c928",
+      "name": "Get Fabric Ports",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -496,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// COMPLETE WORKING VERSION - Process all ports\nconst input = $input.first();\nconst responseData = input?.json;\nconst ports = responseData?.data || [];\n\nconsole.log(`Processing ${ports.length} ports`);\n\nif (ports.length === 0) {\n  return {\n    portSummary: { totalPorts: 0, activePorts: 0, inactivePorts: 0, highUtilizationPorts: 0, fullyUtilizedPorts: 0, unusedPorts: 0, averageUtilization: 0, totalBandwidth: 0, usedBandwidth: 0, lastUpdated: new Date().toISOString() },\n    ports: [],\n    highUtilizationPorts: [],\n    fullyUtilizedPorts: [],\n    pagination: responseData?.pagination\n  };\n}\n\nconst processedPorts = [];\nlet activePorts = 0;\nlet highUtilPorts = 0;\nlet fullyUtilPorts = 0;\nlet unusedPorts = 0;\nlet totalBandwidth = 0;\nlet totalUsedBandwidth = 0;\nlet totalUtilization = 0;\n\n// Process all ports\nfor (let i = 0; i < ports.length; i++) {\n  const port = ports[i];\n  \n  // Use actual API field names\n  const bandwidth = port.bandwidth || 0;\n  const usedBandwidth = port.usedBandwidth || 0;\n  const availableBandwidth = port.availableBandwidth || 0;\n  \n  // Calculate bandwidth utilization\n  const utilization = bandwidth > 0 ? ((usedBandwidth / bandwidth) * 100) : 0;\n  \n  // Connection counts\n  const connectionCount = port.operation?.connectionCount || 0;\n  const evplVCCount = port.operation?.evplVCCount || 0;\n  const accessVCCount = port.operation?.accessVCCount || 0;\n  \n  // Count for summary\n  if (port.state === 'ACTIVE') activePorts++;\n  if (utilization > 80) highUtilPorts++;\n  if (utilization >= 100) fullyUtilPorts++;\n  if (usedBandwidth === 0) unusedPorts++;\n  \n  // Accumulate totals\n  totalBandwidth += bandwidth;\n  totalUsedBandwidth += usedBandwidth;\n  totalUtilization += utilization;\n  \n  // Store processed port data\n  processedPorts.push({\n    uuid: port.uuid,\n    name: port.name,\n    type: port.type,\n    state: port.state,\n    bandwidth: bandwidth,\n    usedBandwidth: usedBandwidth,\n    availableBandwidth: availableBandwidth,\n    utilization: parseFloat(utilization.toFixed(2)),\n    connectionCount: connectionCount,\n    evplVCCount: evplVCCount,\n    accessVCCount: accessVCCount,\n    location: {\n      metroCode: port.location?.metroCode || '',\n      metroName: port.location?.metroName || '',\n      ibx: port.location?.ibx || ''\n    },\n    account: {\n      organizationName: port.account?.organizationName || '',\n      accountName: port.account?.accountName || ''\n    },\n    physicalPortsSpeed: port.physicalPortsSpeed || 0,\n    physicalPortsType: port.physicalPortsType || '',\n    packageType: port.package?.code || ''\n  });\n}\n\nconst portSummary = {\n  totalPorts: responseData?.pagination?.total || ports.length,\n  activePorts: activePorts,\n  inactivePorts: ports.length - activePorts,\n  highUtilizationPorts: highUtilPorts,\n  fullyUtilizedPorts: fullyUtilPorts,\n  unusedPorts: unusedPorts,\n  averageUtilization: ports.length > 0 ? (totalUtilization / ports.length).toFixed(2) : 0,\n  totalBandwidth: totalBandwidth,\n  usedBandwidth: totalUsedBandwidth,\n  availableBandwidth: totalBandwidth - totalUsedBandwidth,\n  lastUpdated: new Date().toISOString()\n};\n\nconsole.log('Port processing complete:');\nconsole.log('- Total ports:', portSummary.totalPorts);\nconsole.log('- Active ports:', portSummary.activePorts);\nconsole.log('- High utilization ports:', portSummary.highUtilizationPorts);\nconsole.log('- Average utilization:', portSummary.averageUtilization + '%');\n\nreturn {\n  portSummary: portSummary,\n  ports: processedPorts,\n  highUtilizationPorts: processedPorts.filter(p => p.utilization > 80),\n  fullyUtilizedPorts: processedPorts.filter(p => p.utilization >= 100),\n  pagination: responseData?.pagination\n};"
+      },
+      "id": "0f4534b3-d261-4420-840d-d99744b65071",
+      "name": "Process Port Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -272,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ENHANCED Generate Status Report - Handles partial data gracefully\nconst inputs = $input.all();\n\nconsole.log('=== ENHANCED DIAGNOSTIC ===');\nconsole.log('Number of inputs received:', inputs.length);\n\nlet connectionData = null;\nlet portData = null;\n\n// Check each input with detailed logging\nfor (let i = 0; i < inputs.length; i++) {\n  const input = inputs[i];\n  const data = input.json || input;\n  \n  console.log('Input ' + i + ' keys:', Object.keys(data));\n  console.log('Input ' + i + ' preview:', JSON.stringify(data).substring(0, 200) + '...');\n  \n  // Check for connection data with multiple patterns\n  if (data.summary && data.connections) {\n    connectionData = data;\n    console.log('✅ Found connection data (pattern 1): ' + data.summary.totalConnections + ' connections');\n  } else if (data.summary && data.summary.totalConnections) {\n    connectionData = data;\n    console.log('✅ Found connection data (pattern 2): ' + data.summary.totalConnections + ' connections');\n  } else if (data.alertsRequired) {\n    connectionData = data;\n    console.log('✅ Found connection data (pattern 3): alerts array found');\n  }\n  \n  // Check for port data with multiple patterns  \n  if (data.portSummary && data.ports) {\n    portData = data;\n    console.log('✅ Found port data (pattern 1): ' + data.portSummary.totalPorts + ' ports');\n  } else if (data.portSummary && data.portSummary.totalPorts) {\n    portData = data;\n    console.log('✅ Found port data (pattern 2): ' + data.portSummary.totalPorts + ' ports');\n  } else if (data.highUtilizationPorts) {\n    portData = data;\n    console.log('✅ Found port data (pattern 3): high utilization array found');\n  }\n}\n\n// Try alternative methods to get connection data\nif (!connectionData) {\n  console.log('🔍 Trying alternative methods for connection data...');\n  \n  try {\n    // Method 1: Try to get from Process Connection Status node directly\n    const connectionNodes = $('Process Connection Status').all();\n    console.log('Connection nodes found:', connectionNodes.length);\n    \n    if (connectionNodes && connectionNodes.length > 0) {\n      for (let j = 0; j < connectionNodes.length; j++) {\n        const nodeData = connectionNodes[j].json || connectionNodes[j];\n        console.log('Connection node ' + j + ' keys:', Object.keys(nodeData));\n        \n        if (nodeData.summary && (nodeData.connections || nodeData.summary.totalConnections > 0)) {\n          connectionData = nodeData;\n          console.log('✅ Retrieved connection data from node reference method 1');\n          break;\n        }\n      }\n    }\n  } catch (error) {\n    console.log('❌ Method 1 failed:', error.message);\n  }\n  \n  try {\n    // Method 2: Try different node reference syntax\n    const connectionNodeAlt = $('Process Connection Status');\n    if (connectionNodeAlt && connectionNodeAlt.json) {\n      const nodeData = connectionNodeAlt.json;\n      if (nodeData.summary) {\n        connectionData = nodeData;\n        console.log('✅ Retrieved connection data from node reference method 2');\n      }\n    }\n  } catch (error) {\n    console.log('❌ Method 2 failed:', error.message);\n  }\n}\n\nconsole.log('=== FINAL DATA STATUS ===');\nconsole.log('Connection data available:', !!connectionData);\nconsole.log('Port data available:', !!portData);\n\nif (connectionData) {\n  console.log('Connections - Total:', connectionData.summary ? connectionData.summary.totalConnections : 'unknown');\n  console.log('Connections - Down:', connectionData.summary ? connectionData.summary.downConnections : 'unknown');\n} else {\n  console.log('⚠️ No connection data - will calculate health based on ports only');\n}\n\nif (portData) {\n  console.log('Ports - Total:', portData.portSummary ? portData.portSummary.totalPorts : 'unknown');\n  console.log('Ports - High Util:', portData.portSummary ? portData.portSummary.highUtilizationPorts : 'unknown');\n}\n\n// Enhanced health calculation that works with partial data\nfunction calculateFlexibleHealth(connectionSummary, portSummary) {\n  let totalScore = 0;\n  let maxScore = 0;\n  const factors = {};\n  \n  // Connection health (if available)\n  if (connectionSummary && connectionSummary.totalConnections > 0) {\n    const downConnections = connectionSummary.downConnections || 0;\n    const connectionHealth = ((connectionSummary.totalConnections - downConnections) / connectionSummary.totalConnections) * 100;\n    factors.connectionHealth = connectionHealth;\n    totalScore += connectionHealth * 0.6; // Higher weight when it's the only factor\n    maxScore += 60;\n    console.log('Connection health factor:', connectionHealth.toFixed(1) + '%');\n  } else {\n    console.log('Connection health: Not available');\n  }\n  \n  // Port utilization health (if available)\n  if (portSummary && portSummary.totalPorts > 0) {\n    const highUtilPorts = portSummary.highUtilizationPorts || 0;\n    const fullyUtilPorts = portSummary.fullyUtilizedPorts || 0;\n    \n    // Calculate port health based on utilization\n    const utilizationPenalty = (highUtilPorts * 0.5 + fullyUtilPorts * 1.0) / portSummary.totalPorts;\n    const portHealth = Math.max(0, (1 - utilizationPenalty) * 100);\n    \n    factors.portHealth = portHealth;\n    totalScore += portHealth * 0.4;\n    maxScore += 40;\n    console.log('Port health factor:', portHealth.toFixed(1) + '%');\n  } else {\n    console.log('Port health: Not available');\n  }\n  \n  const overallScore = maxScore > 0 ? Math.round(totalScore / maxScore * 100) : 0;\n  \n  // Determine status with more nuanced thresholds\n  let status = 'unknown';\n  if (maxScore === 0) {\n    status = 'unknown';\n  } else if (overallScore >= 90) {\n    status = 'healthy';\n  } else if (overallScore >= 75) {\n    status = 'warning';\n  } else if (overallScore >= 50) {\n    status = 'degraded';\n  } else {\n    status = 'critical';\n  }\n  \n  return {\n    status: status,\n    score: overallScore,\n    factors: factors,\n    dataAvailable: {\n      connections: !!connectionSummary,\n      ports: !!portSummary\n    }\n  };\n}\n\n// Generate concerns based on available data\nfunction generateFlexibleConcerns(connectionSummary, portSummary) {\n  const concerns = [];\n  \n  if (!connectionSummary && !portSummary) {\n    concerns.push('No monitoring data available');\n    return concerns;\n  }\n  \n  if (!connectionSummary) {\n    concerns.push('Connection monitoring data unavailable');\n  } else {\n    if (connectionSummary.downConnections > 0) {\n      concerns.push(connectionSummary.downConnections + ' connections are down');\n    }\n    if (connectionSummary.unknownConnections > 0) {\n      concerns.push(connectionSummary.unknownConnections + ' connections have unknown status');\n    }\n  }\n  \n  if (!portSummary) {\n    concerns.push('Port monitoring data unavailable');\n  } else {\n    if (portSummary.highUtilizationPorts > 5) { // Only flag if significant number\n      concerns.push(portSummary.highUtilizationPorts + ' ports are over 80% utilized');\n    }\n    if (portSummary.fullyUtilizedPorts > 0) {\n      concerns.push(portSummary.fullyUtilizedPorts + ' ports are fully utilized');\n    }\n  }\n  \n  return concerns;\n}\n\n// Calculate health with flexible inputs\nconst overallHealth = calculateFlexibleHealth(\n  connectionData ? connectionData.summary : null,\n  portData ? portData.portSummary : null\n);\n\nconst primaryConcerns = generateFlexibleConcerns(\n  connectionData ? connectionData.summary : null,\n  portData ? portData.portSummary : null\n);\n\nconsole.log('=== FINAL HEALTH CALCULATION ===');\nconsole.log('Overall health:', overallHealth.status);\nconsole.log('Health score:', overallHealth.score);\nconsole.log('Primary concerns:', primaryConcerns.length);\n\n// Return comprehensive result that works with partial data\nreturn {\n  overallHealth: overallHealth,\n  primaryConcerns: primaryConcerns,\n  timestamp: new Date().toISOString(),\n  \n  summary: {\n    totalConnections: connectionData && connectionData.summary ? connectionData.summary.totalConnections : 0,\n    healthyConnections: connectionData && connectionData.summary ? connectionData.summary.healthyConnections : 0,\n    downConnections: connectionData && connectionData.summary ? connectionData.summary.downConnections : 0,\n    unknownConnections: connectionData && connectionData.summary ? connectionData.summary.unknownConnections : 0,\n    \n    totalPorts: portData && portData.portSummary ? portData.portSummary.totalPorts : 0,\n    activePorts: portData && portData.portSummary ? portData.portSummary.activePorts : 0,\n    highUtilizationPorts: portData && portData.portSummary ? portData.portSummary.highUtilizationPorts : 0,\n    fullyUtilizedPorts: portData && portData.portSummary ? portData.portSummary.fullyUtilizedPorts : 0,\n    averageUtilization: portData && portData.portSummary ? portData.portSummary.averageUtilization : 0\n  },\n  \n  criticalConnections: connectionData && connectionData.alertsRequired ? connectionData.alertsRequired.slice(0, 10) : [],\n  criticalPorts: portData && portData.fullyUtilizedPorts ? portData.fullyUtilizedPorts.slice(0, 10) : [],\n  \n  // Enhanced debugging info\n  dataSourcesAvailable: {\n    hasConnectionData: !!connectionData,\n    hasPortData: !!portData,\n    inputCount: inputs.length,\n    nodeReferences: {\n      connectionNodeAccessible: 'tested',\n      portNodeAccessible: 'tested'\n    }\n  }\n};"
+      },
+      "id": "7b96502b-d44a-4da5-842f-3ca33c20604a",
+      "name": "Generate Status Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        528
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "condition1",
+              "leftValue": "={{ $json.overallHealth.status }}",
+              "rightValue": "healthy",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "606fdf40-9d24-456f-ad2f-117b740a95da",
+      "name": "Check Overall Health",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        176,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "{{MONITORING_FROM_EMAIL}}",
+        "toEmail": "{{MONITORING_TO_EMAIL}}",
+        "subject": "=={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "=Credential: [Your SMTP Credentials]\nOperation: Send\nFrom Email: monitoring@yourcompany.com\nTo Email: noc@yourcompany.com,ops@yourcompany.com\nSubject: ={{ $json.subject }}\nEmail Format: Text\nMessage: ={{ $json.message }}",
+        "options": {}
+      },
+      "id": "5b482537-924c-4355-971d-e0ef02f67ef9",
+      "name": "Send Email Alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        624,
+        528
+      ],
+      "webhookId": "{{WEBHOOK_ID}}",
+      "credentials": {
+        "smtp": {
+          "id": "{{SMTP_CREDENTIAL_ID}}",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// COMPLETE MANUAL EMAIL FORMATTER\n// Replace your Summarization Chain with this Code node\n\nconst input = $input.first().json;\n\nconsole.log('=== MANUAL EMAIL FORMATTER ===');\nconsole.log('Input data available:', !!input);\nconsole.log('Health status:', input.overallHealth?.status);\nconsole.log('Health score:', input.overallHealth?.score);\n\n// Extract data with safe defaults\nconst health = input.overallHealth || {};\nconst summary = input.summary || {};\nconst concerns = input.primaryConcerns || [];\nconst criticalConnections = input.criticalConnections || [];\nconst criticalPorts = input.criticalPorts || [];\nconst timestamp = input.timestamp || new Date().toISOString();\n\n// Status-based configuration\nconst statusConfig = {\n  'critical': {\n    emoji: '🚨',\n    urgency: 'URGENT',\n    priority: 'high',\n    actionTime: 'IMMEDIATE (1-2 Hours)',\n    color: 'red'\n  },\n  'degraded': {\n    emoji: '⚠️',\n    urgency: 'HIGH PRIORITY',\n    priority: 'high',\n    actionTime: 'PRIORITY (4-8 Hours)',\n    color: 'orange'\n  },\n  'warning': {\n    emoji: '⚠️',\n    urgency: 'ATTENTION REQUIRED',\n    priority: 'normal',\n    actionTime: 'REVIEW (24 Hours)',\n    color: 'yellow'\n  },\n  'healthy': {\n    emoji: '✅',\n    urgency: 'INFORMATIONAL',\n    priority: 'low',\n    actionTime: 'ROUTINE MONITORING',\n    color: 'green'\n  },\n  'unknown': {\n    emoji: '❓',\n    urgency: 'DATA ISSUE',\n    priority: 'normal',\n    actionTime: 'INVESTIGATE (2-4 Hours)',\n    color: 'gray'\n  }\n};\n\nconst config = statusConfig[health.status] || statusConfig['unknown'];\n\n// Generate email subject\nconst emailSubject = `${config.emoji} ${config.urgency}: Equinix Fabric Alert - ${(health.status || 'UNKNOWN').toUpperCase()} (${health.score || 0}/100)`;\n\n// Helper function to format numbers\nfunction formatNumber(num) {\n  return (num || 0).toLocaleString();\n}\n\n// Helper function to calculate percentages\nfunction calculatePercentage(part, total) {\n  if (!total || total === 0) return '0';\n  return Math.round((part / total) * 100);\n}\n\n// Connection health summary\nconst connectionHealthPercent = calculatePercentage(summary.healthyConnections, summary.totalConnections);\nconst connectionDownPercent = calculatePercentage(summary.downConnections, summary.totalConnections);\n\n// Port utilization summary\nconst portUtilizationPercent = calculatePercentage(summary.highUtilizationPorts, summary.totalPorts);\nconst portSaturationPercent = calculatePercentage(summary.fullyUtilizedPorts, summary.totalPorts);\n\n// Generate main email body\nconst emailBody = `${config.emoji} EQUINIX FABRIC INFRASTRUCTURE ALERT\n${'='.repeat(50)}\nStatus: ${(health.status || 'UNKNOWN').toUpperCase()}\nHealth Score: ${health.score || 0}/100\nPriority: ${config.urgency}\nGenerated: ${new Date(timestamp).toLocaleString('en-AU', { timeZone: 'Australia/Sydney' })}\n\n📊 EXECUTIVE SUMMARY\n${'='.repeat(50)}\n${health.status === 'critical' ? \n  `🚨 CRITICAL INFRASTRUCTURE ISSUES DETECTED\n- ${summary.downConnections || 0} connections are offline (${connectionDownPercent}% failure rate)\n- ${summary.fullyUtilizedPorts || 0} ports at maximum capacity\n- Immediate intervention required across multiple regions` :\n\n  health.status === 'degraded' || health.status === 'warning' ?\n  `⚠️ INFRASTRUCTURE DEGRADATION DETECTED\n- ${summary.downConnections || 0} connections experiencing issues\n- ${summary.highUtilizationPorts || 0} ports approaching capacity limits\n- Performance monitoring and capacity planning recommended` :\n\n  health.status === 'healthy' ?\n  `✅ INFRASTRUCTURE OPERATING NORMALLY\n- All critical systems functioning within normal parameters\n- Routine monitoring continues as scheduled\n- No immediate action required` :\n  \n  `❓ MONITORING DATA INCOMPLETE\n- Unable to determine complete infrastructure health status\n- Data collection or connectivity issues detected\n- Investigation of monitoring systems recommended`\n}\n\n📈 INFRASTRUCTURE METRICS\n${'='.repeat(50)}\nCONNECTIONS:\n  • Total: ${formatNumber(summary.totalConnections)}\n  • Healthy: ${formatNumber(summary.healthyConnections)} (${connectionHealthPercent}%)\n  • Down: ${formatNumber(summary.downConnections)} (${connectionDownPercent}%)\n  • Unknown Status: ${formatNumber(summary.unknownConnections)}\n\nPORTS:\n  • Total Active: ${formatNumber(summary.totalPorts)}\n  • Average Utilization: ${summary.averageUtilization || 0}%\n  • High Utilization (>80%): ${formatNumber(summary.highUtilizationPorts)} (${portUtilizationPercent}%)\n  • Fully Utilized (100%): ${formatNumber(summary.fullyUtilizedPorts)} (${portSaturationPercent}%)\n\n${concerns.length > 0 ? `⚠️ PRIMARY CONCERNS\n${'='.repeat(50)}\n${concerns.map((concern, index) => `${index + 1}. ${concern}`).join('\\n')}` : '✅ NO CRITICAL CONCERNS IDENTIFIED'}\n\n${criticalConnections.length > 0 ? `🔴 CRITICAL CONNECTIONS REQUIRING ATTENTION\n${'='.repeat(50)}\n${criticalConnections.slice(0, 8).map((conn, index) => {\n  const location = conn.aSide?.location || conn.location || 'Unknown';\n  const accountInfo = conn.account?.accountNumber ? ` [Account: ${conn.account.accountNumber}]` : '';\n  return `${index + 1}. ${conn.name}\n   Status: ${conn.state} (${conn.healthStatus})\n   Location: ${location}${accountInfo}\n   Created: ${conn.createdDateTime ? new Date(conn.createdDateTime).toLocaleDateString() : 'Unknown'}`;\n}).join('\\n\\n')}\n\n${criticalConnections.length > 8 ? `... and ${criticalConnections.length - 8} additional critical connections` : ''}` : ''}\n\n${criticalPorts.length > 0 ? `🟡 HIGH-UTILIZATION PORTS REQUIRING REVIEW\n${'='.repeat(50)}\n${criticalPorts.slice(0, 8).map((port, index) => {\n  const location = port.location?.metroCode || port.location?.metroName || 'Unknown';\n  const utilizationWarning = port.utilization >= 100 ? ' ⚠️ FULLY SATURATED' : port.utilization >= 90 ? ' ⚠️ NEAR CAPACITY' : '';\n  return `${index + 1}. ${port.name}\n   Utilization: ${port.utilization}%${utilizationWarning}\n   Location: ${location}\n   Bandwidth: ${port.bandwidth ? formatNumber(port.bandwidth) + ' Mbps' : 'Unknown'}`;\n}).join('\\n\\n')}\n\n${criticalPorts.length > 8 ? `... and ${criticalPorts.length - 8} additional high-utilization ports` : ''}` : ''}\n\n📋 RECOMMENDED ACTIONS\n${'='.repeat(50)}\n${config.actionTime}:\n\n${health.status === 'critical' ? \n  `🚨 IMMEDIATE ACTIONS REQUIRED:\n- Contact Network Operations Center (NOC) immediately\n- Investigate ${summary.downConnections || 0} offline connections in affected regions\n- Review capacity for ${summary.fullyUtilizedPorts || 0} saturated ports\n- Coordinate with regional teams in affected locations\n- Prepare incident communication for stakeholders\n- Consider emergency capacity provisioning if needed\n\n📅 SHORT-TERM ACTIONS (24-48 Hours):\n- Root cause analysis for connection failures\n- Capacity expansion planning for over-utilized ports\n- Update incident response procedures\n- Review monitoring thresholds and alerting rules` :\n\n  health.status === 'degraded' || health.status === 'warning' ?\n  `⚠️ PRIORITY ACTIONS RECOMMENDED:\n- Monitor ${summary.downConnections || 0} problematic connections closely\n- Review capacity planning for ${summary.highUtilizationPorts || 0} high-utilization ports\n- Contact vendors for affected regions if issues persist\n- Update capacity forecasts and procurement timelines\n\n📅 ONGOING MONITORING (Next 7 Days):\n- Daily review of utilization trends\n- Proactive capacity management\n- Performance baseline updates\n- Preventive maintenance scheduling` :\n\n  health.status === 'healthy' ?\n  `✅ ROUTINE ACTIVITIES:\n- Continue standard monitoring procedures\n- Review monthly capacity reports\n- Update performance baselines\n- Conduct scheduled maintenance activities\n\n📅 STRATEGIC PLANNING:\n- Long-term capacity planning review\n- Infrastructure optimization opportunities\n- Performance trend analysis` :\n  \n  `❓ INVESTIGATION REQUIRED:\n- Verify monitoring system connectivity\n- Check data collection processes\n- Review API authentication and permissions\n- Validate monitoring configuration\n\n📅 SYSTEM HEALTH CHECK:\n- Test all monitoring endpoints\n- Verify alert distribution lists\n- Update monitoring documentation`\n}\n\n🔧 SUPPORT CONTACTS\n${'='.repeat(50)}\n- Network Operations Center: [Your NOC Contact]\n- Regional Support Teams: [Contact Information]\n- Escalation Manager: [Manager Contact]\n- Emergency Hotline: [Emergency Number]\n\nFor technical details and live dashboard access:\n- Monitoring Dashboard: [Your Dashboard URL]\n- Incident Management: [Your Ticket System]\n\n${'='.repeat(50)}\nGenerated by Equinix Fabric Monitoring System\nNext scheduled check: ${new Date(Date.now() + 15 * 60 * 1000).toLocaleString('en-AU', { timeZone: 'Australia/Sydney' })}\n\nThis is an automated alert. Reply to this email or contact the NOC for immediate assistance.`;\n\n// Log email details for debugging\nconsole.log('Email subject:', emailSubject);\nconsole.log('Email priority:', config.priority);\nconsole.log('Concerns count:', concerns.length);\nconsole.log('Critical connections:', criticalConnections.length);\nconsole.log('Critical ports:', criticalPorts.length);\n\n// Return complete email data\nreturn {\n  // Email configuration\n  subject: emailSubject,\n  message: emailBody,\n  priority: config.priority,\n  \n  // Additional metadata for email node configuration\n  urgencyLevel: config.urgency,\n  healthStatus: health.status,\n  healthScore: health.score,\n  timestamp: timestamp,\n  \n  // Summary for other nodes if needed\n  alertSummary: {\n    totalIssues: concerns.length,\n    criticalConnections: criticalConnections.length,\n    criticalPorts: criticalPorts.length,\n    overallSeverity: health.status,\n    requiresImmediateAction: health.status === 'critical'\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        528
+      ],
+      "id": "cbb96d45-07cf-4c8f-ad3f-819efcdc027c",
+      "name": "Format Email"
+    },
+    {
+      "parameters": {
+        "content": "## 🌟 **PROJECT OVERVIEW**\n**AI-Assisted Zero-Code Infrastructure Monitoring**\n\n- Monitor critical network components (Virtual connections and 300+ Fabric ports regionally)\n- Provide 24/7 automated health assessment\n- Deliver actionable intelligence to Infrastructure Operations teams\n- Reduce MTTR (Mean Time To Resolution) for infrastructure issues\n- Enable proactive capacity planning and incident prevention",
+        "height": 240,
+        "width": 544,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -832,
+        -304
+      ],
+      "id": "f7920cb4-f60c-4c20-9894-b6b6068443c4",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "## 🤖 Claude AI Development Methodology\n**Zero-Code/Low-Code Implementation**\n\n- Claude provided complete n8n workflow JSON configuration\n- Generated all JavaScript code for data processing and formatting\n- Created email templates and alert logic\n- Delivered enterprise-grade solution without traditional development\n- Code Written by Human: 0 lines | Generated by Claude: ~500 lines of production JavaScript",
+        "height": 288,
+        "width": 544,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -832,
+        -48
+      ],
+      "typeVersion": 1,
+      "id": "0cbed89e-32dd-4a88-adc4-803092fb735c",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "\n![Source example](https://i.ibb.co/KcqH6PgT/Screenshot-2025-07-22-at-10-52-27-PM.png)",
+        "height": 544,
+        "width": 928,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -272,
+        -304
+      ],
+      "typeVersion": 1,
+      "id": "3ebf866e-e799-4ca5-a58e-22d097e4d1f0",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "# Equinix - the AI Infrastructure Platform\n## 🎯 Platform Vision\n\"Hey AI, provision me a 10Gbps connection from Singapore to Silicon Valley with 99.99% SLA, set up monitoring alerts, and optimize routing for latency\"\n→ Autonomous AI agent handles everything from ordering to provisioning to ongoing management",
+        "width": 1488,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -832,
+        -480
+      ],
+      "typeVersion": 1,
+      "id": "82fb1f2e-7bb5-4c40-88b6-94fab4a13bb5",
+      "name": "Sticky Note3"
     }
   ],
   "pinData": {},
@@ -149,6 +420,120 @@
         [
           {
             "node": "Store Access Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Access Token": {
+      "main": [
+        [
+          {
+            "node": "Get Fabric Connections",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Fabric Ports",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Fabric Connections": {
+      "main": [
+        [
+          {
+            "node": "Process Connection Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Connection Status": {
+      "main": [
+        [
+          {
+            "node": "Check for Alerts",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate Status Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check for Alerts": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Fabric Ports": {
+      "main": [
+        [
+          {
+            "node": "Process Port Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Port Status": {
+      "main": [
+        [
+          {
+            "node": "Generate Status Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Status Report": {
+      "main": [
+        [
+          {
+            "node": "Check Overall Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Overall Health": {
+      "main": [
+        [
+          {
+            "node": "Format Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email Alert": {
+      "main": [
+        []
+      ]
+    },
+    "Format Email": {
+      "main": [
+        [
+          {
+            "node": "Send Email Alert",
             "type": "main",
             "index": 0
           }
