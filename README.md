@@ -142,6 +142,4 @@ This project is licensed under the MIT License - see [LICENSE](LICENSE) for deta
 
 ---
 
-**Built with ❤️ by Equinix using Claude AI and n8n**
-
 *Repository: https://github.com/sliuuu/equinix-fabric-monitoring*
