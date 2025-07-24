@@ -79,8 +79,8 @@ EQUINIX_CLIENT_SECRET=your_client_secret
 SLACK_WEBHOOK_URL=your_webhook_url
 
 # Email Configuration
-FROM_EMAIL=monitoring@equinix.com
-TO_EMAIL=noc@equinix.com
+FROM_EMAIL=support@example.com
+TO_EMAIL=noc@example.com
 ```
 
 ## 📊 Monitoring Features
