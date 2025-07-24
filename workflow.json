@@ -1,0 +1,177 @@
+{
+  "name": "Equinix Fabric Monitoring - Slack - Email",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "id": "c91b349d-a928-4415-a42d-a2e45e0d1572",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1168,
+        432
+      ],
+      "webhookId": "",
+      "cronExpression": "0 */15 * * * *"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.equinix.com/oauth2/v1/token",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/x-www-form-urlencoded"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "grant_type",
+              "value": "client_credentials"
+            },
+            {
+              "name": "client_id",
+              "value": "{{EQUINIX_CLIENT_ID}}"
+            },
+            {
+              "name": "client_secret",
+              "value": "{{EQUINIX_CLIENT_SECRET}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "37e28bbb-ccc7-40cd-9aed-d49894f16483",
+      "name": "Get OAuth Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -944,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "token-assignment",
+              "name": "equinix_access_token",
+              "value": "={{ $json.access_token }}",
+              "type": "string"
+            },
+            {
+              "id": "token-expiry",
+              "name": "token_expires_at",
+              "value": "={{ DateTime.now().plus({ seconds: parseInt($json.token_timeout) }).toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "user-info",
+              "name": "equinix_user",
+              "value": "={{ $json.user_name }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "41faf550-63d4-4313-9d70-04e395d493a5",
+      "name": "Store Access Token",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -720,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.equinix.com/fabric/v4/connections/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.equinix_access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "f62d372a-43a4-4341-b99f-bde25238aa39",
+      "name": "Get Fabric Connections",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -496,
+        336
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get OAuth Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get OAuth Token": {
+      "main": [
+        [
+          {
+            "node": "Store Access Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "{{VERSION_ID}}",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "{{INSTANCE_ID}}"
+  },
+  "id": "{{WORKFLOW_ID}}",
+  "tags": [
+    {
+      "createdAt": "{{CREATED_DATE}}",
+      "updatedAt": "{{UPDATED_DATE}}",
+      "id": "{{TAG_ID}}",
+      "name": "Equinix Monitoring"
+    }
+  ]
+}
